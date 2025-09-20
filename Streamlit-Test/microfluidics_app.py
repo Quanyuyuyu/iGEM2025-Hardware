@@ -558,3 +558,67 @@ with main_col2:
         **结果判定**: 反应正常进行中，建议继续监测。预计还需10分钟达到稳定状态。
         """)
         st.button("生成详细报告", key="generate_report")
+# -------------------- KD值计算功能 (新增内容) --------------------
+st.divider()
+st.subheader("KD值计算工具")
+
+with st.expander("Excel数据导入与KD值计算", expanded=True):
+    # 文件上传组件
+    kd_file = st.file_uploader("上传Excel数据文件", type=["xlsx", "xls"], key="kd_calculator_uploader")
+    
+    if kd_file is not None:
+        try:
+            # 动态导入pandas以避免影响原有功能
+            import pandas as pd
+            
+            # 读取Excel文件第一张工作表
+            df = pd.read_excel(kd_file, sheet_name=0)
+            
+            # 显示数据预览
+            st.markdown("### 数据预览")
+            st.dataframe(df.head(5))
+            
+            # 提取指定单元格数据 (第二行第三、四、五列)
+            # 注意：pandas使用0-based索引
+            row_index = 1  # 第二行
+            col_indices = [2, 3, 4]  # 第三、四、五列
+            
+            # 检查数据是否存在
+            if len(df) > row_index and len(df.columns) > max(col_indices):
+                m1_plus_m1m2 = df.iloc[row_index, col_indices[0]]
+                m2_plus_m1m2 = df.iloc[row_index, col_indices[1]]
+                m1m2 = df.iloc[row_index, col_indices[2]]
+                
+                # 显示提取的数据
+                st.markdown("### 提取的参数值")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("m1+m1m2", f"{m1_plus_m1m2:.4f}")
+                with col2:
+                    st.metric("m2+m1m2", f"{m2_plus_m1m2:.4f}")
+                with col3:
+                    st.metric("m1m2", f"{m1m2:.4f}")
+                
+                # 计算KD值
+                m1 = m1_plus_m1m2 - m1m2
+                m2 = m2_plus_m1m2 - m1m2
+                
+                if m1m2 != 0:
+                    kd_value = (m1 * m2) / m1m2
+                    
+                    # 显示计算结果
+                    st.markdown("### KD值计算结果")
+                    st.latex(r"KD = \frac{m1 \times m2}{m1m2}")
+                    st.success(f"KD = {kd_value:.6f}")
+                    
+                    # 添加到系统日志
+                    add_system_log(f"KD值计算完成: {kd_value:.6f}")
+                else:
+                    st.error("无法计算KD值: m1m2的值不能为零")
+            else:
+                st.error("Excel文件格式不正确，无法找到指定单元格数据")
+        except Exception as e:
+            st.error(f"数据处理错误: {str(e)}")
+            add_system_log(f"KD值计算失败: {str(e)}")
+    else:
+        st.info("请上传包含实验数据的Excel文件")
