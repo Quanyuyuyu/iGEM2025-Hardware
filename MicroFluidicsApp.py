@@ -1,9 +1,11 @@
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
-from datetime import datetime, timedelta
-import time
 import numpy as np
+import pandas as pd
+from scipy.optimize import curve_fit
+from datetime import datetime
+import time
+import io
 
 # 页面配置
 st.set_page_config(
@@ -20,31 +22,11 @@ if 'app_state' not in st.session_state:
             2: { "running": False, "flow": 30, "time": 15, "name": "缓冲液A" },
             3: { "running": False, "flow": 40, "time": 20, "name": "缓冲液B" }
         },
-        "valves": {
-            1: { "state": "open", "description": "通向芯片入口A" },
-            2: { "state": "close", "description": "通向芯片入口B" },
-            3: { "state": "close", "description": "通向废液槽" },
-            4: { "state": "open", "description": "检测通道" },
-            5: { "state": "close", "description": "清洗通道" },
-            6: { "state": "close", "description": "缓冲液B通道" }
-        },
         "experiment": {
             "current_step": 2,
             "total_steps": 5,
             "progress": 35,
             "remaining_time": "9分钟"
-        },
-        "spectra_params": {
-            "start": 400,
-            "end": 700,
-            "mode": "absorbance",
-            "interval": 5
-        },
-        "camera_params": {
-            "exposure": 50,
-            "magnification": "20x",
-            "image_captured": False,
-            "image_url": ""
         },
         "system_log": [
             "[14:28:15] 系统启动完成",
@@ -55,20 +37,64 @@ if 'app_state' not in st.session_state:
             "[14:29:35] 泵2已停止",
             "[14:29:36] 开始混合反应，等待5分钟"
         ],
-        "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "affinity_data": [],  # 存储格式: {"protein": "蛋白A", "concentration": 0.1, "affinity": 1.2, ...}
+        "uploaded_files": []  # 存储已上传的文件名
     }
 
 # 辅助函数：添加系统日志
 def add_system_log(message):
     timestamp = datetime.now().strftime("%H:%M:%S")
     st.session_state.app_state["system_log"].append(f"[{timestamp}] {message}")
-    # 限制日志长度
     if len(st.session_state.app_state["system_log"]) > 50:
         st.session_state.app_state["system_log"].pop(0)
 
 # 辅助函数：更新最后更新时间
 def update_last_update():
     st.session_state.app_state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# 解析FCS数据文件
+def parse_fcs_data(uploaded_file):
+    """解析FCS仪器导出的CSV数据文件"""
+    try:
+        df = pd.read_csv(uploaded_file)
+        
+        # 检查必要的列是否存在
+        required_columns = ['protein', 'concentration', 'affinity']
+        if not all(col in df.columns for col in required_columns):
+            return None, f"CSV文件缺少必要列。需要包含: {', '.join(required_columns)}"
+        
+        # 转换数据格式
+        data = []
+        for _, row in df.iterrows():
+            data.append({
+                "protein": str(row['protein']),
+                "concentration": float(row['concentration']),
+                "affinity": float(row['affinity']),
+                "experiment_id": f"EXP{datetime.now().strftime('%y%m%d')}{len(st.session_state.app_state['affinity_data']) + 1}",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+        
+        return data, "解析成功"
+    except Exception as e:
+        return None, f"解析失败: {str(e)}"
+
+# 拟合亲和力曲线函数
+def fit_affinity_curve(concentrations, affinities):
+    """拟合浓度-亲和力曲线"""
+    def binding_model(c, kd, bmax):
+        """典型的结合模型：Y = (Bmax * C) / (Kd + C)"""
+        return (bmax * c) / (kd + c)
+    
+    try:
+        params, _ = curve_fit(binding_model, concentrations, affinities, p0=[1, 100], maxfev=10000)
+        return {
+            "params": params,  # [Kd, Bmax]
+            "model": binding_model
+        }
+    except Exception as e:
+        st.warning(f"曲线拟合失败: {str(e)}")
+        return None
 
 # 回调函数：启动泵
 def start_pump(pump_id):
@@ -77,9 +103,8 @@ def start_pump(pump_id):
     add_system_log(f"泵{pump_id}启动: {pump['flow']}μL/min, {pump['time']}秒")
     update_last_update()
     
-    # 模拟泵自动停止
     with st.spinner(f"泵{pump_id}运行中..."):
-        time.sleep(pump["time"] / 10)  # 加速模拟，实际应使用pump["time"]秒
+        time.sleep(pump["time"] / 10)  # 加速模拟
     pump["running"] = False
     add_system_log(f"泵{pump_id}已停止")
     update_last_update()
@@ -89,42 +114,6 @@ def stop_pump(pump_id):
     st.session_state.app_state["pumps"][pump_id]["running"] = False
     add_system_log(f"泵{pump_id}已手动停止")
     update_last_update()
-
-# 回调函数：切换阀门状态
-def toggle_valve(valve_id):
-    valve = st.session_state.app_state["valves"][valve_id]
-    new_state = "open" if valve["state"] == "close" else "close"
-    valve["state"] = new_state
-    add_system_log(f"阀门{valve_id}已{new_state}")
-    update_last_update()
-
-# 回调函数：开始光谱检测
-def start_spectra_detection():
-    params = st.session_state.app_state["spectra_params"]
-    add_system_log(f"开始光谱检测: {params['start']}-{params['end']}nm, {params['mode']}模式")
-    update_last_update()
-    
-    with st.spinner("正在进行光谱检测..."):
-        time.sleep(2)  # 模拟检测时间
-    add_system_log("光谱检测完成")
-    update_last_update()
-    st.success("光谱检测已完成")
-
-# 回调函数：捕获图像
-def capture_image():
-    params = st.session_state.app_state["camera_params"]
-    add_system_log(f"开始成像检测: {params['magnification']}, {params['exposure']}ms曝光")
-    update_last_update()
-    
-    with st.spinner("正在捕获图像..."):
-        time.sleep(1.5)  # 模拟捕获时间
-        # 生成随机图像
-        st.session_state.app_state["camera_params"]["image_url"] = f"https://picsum.photos/seed/{np.random.randint(1000)}/600/400"
-        st.session_state.app_state["camera_params"]["image_captured"] = True
-    
-    add_system_log("成像检测完成，已捕获反应区域图像")
-    update_last_update()
-    st.success("图像捕获成功")
 
 # 回调函数：运行实验流程
 def run_experiment():
@@ -157,7 +146,6 @@ def run_experiment():
 
 # 回调函数：紧急停止
 def emergency_stop():
-    # 停止所有泵
     for pump_id in st.session_state.app_state["pumps"]:
         if st.session_state.app_state["pumps"][pump_id]["running"]:
             st.session_state.app_state["pumps"][pump_id]["running"] = False
@@ -169,7 +157,6 @@ def emergency_stop():
 # 生成实时数据图表
 def generate_realtime_chart():
     x = list(range(20))
-    # 生成有趋势的随机数据
     base = np.linspace(0.1, 0.6, 20)
     noise = np.random.normal(0, 0.02, 20)
     y = base + noise
@@ -188,299 +175,206 @@ def generate_realtime_chart():
     )
     return fig
 
-# 生成光谱结果图表
-def generate_spectra_chart():
-    wavelengths = np.arange(400, 710, 10)
-    # 生成模拟光谱数据
-    peak = 527
-    data = 0.5 * np.exp(-0.5 * ((wavelengths - peak) / 100) ** 2) + 0.1
+# 生成亲和力曲线图表
+def generate_affinity_chart():
+    affinity_data = st.session_state.app_state["affinity_data"]
+    if not affinity_data:
+        return None
     
+    # 获取唯一的蛋白列表
+    proteins = list(set(item["protein"] for item in affinity_data))
+    
+    # 创建图表
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=wavelengths, y=data, mode='lines', name='吸光度',
-                            line=dict(color='#36CFC9'),
-                            fill='tozeroy', fillcolor='rgba(54, 207, 201, 0.1)'))
     
+    # 为每种蛋白添加数据点和曲线
+    for protein in proteins:
+        # 筛选该蛋白的数据
+        protein_data = [item for item in affinity_data if item["protein"] == protein]
+        concentrations = [item["concentration"] for item in protein_data]
+        affinities = [item["affinity"] for item in protein_data]
+        
+        # 添加数据点
+        fig.add_trace(go.Scatter(
+            x=concentrations,
+            y=affinities,
+            mode='markers',
+            name=protein,
+            marker=dict(size=8)
+        ))
+        
+        # 拟合曲线
+        if len(concentrations) >= 3:  # 需要至少3个点才能拟合
+            fit_result = fit_affinity_curve(concentrations, affinities)
+            if fit_result:
+                x_fit = np.linspace(min(concentrations), max(concentrations), 100)
+                y_fit = fit_result["model"](x_fit, *fit_result["params"])
+                fig.add_trace(go.Scatter(
+                    x=x_fit,
+                    y=y_fit,
+                    mode='lines',
+                    name=f'{protein} 拟合曲线',
+                    line=dict(dash='dash')
+                ))
+    
+    # 更新图表布局
     fig.update_layout(
-        height=200,
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title='波长 (nm)',
-        yaxis_title='吸光度',
-        showlegend=False
+        height=400,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis_title='浓度 (μM)',
+        yaxis_title='亲和力 (μM⁻¹)',
+        title='FCS测得亲和力与浓度关系曲线',
+        showlegend=True
     )
+    
     return fig
 
-# 页面标题
-st.title("🧪 微流控测试平台控制软件")
-
-# 顶部状态栏
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.markdown(f"**系统状态**: 正常运行中")
-with col2:
-    st.button("⚠️ 紧急停止", on_click=emergency_stop, type="primary")
-
-st.markdown(f"最后更新: {st.session_state.app_state['last_update']}")
-st.divider()
-
-# 系统状态概览
-st.subheader("系统状态")
-status_cols = st.columns(3)
-
-with status_cols[0]:
-    st.info("""
-    **液体传输系统**  
-    泵 × 3 | 阀门 × 8  
-    🟢 正常运行
-    """)
-
-with status_cols[1]:
-    st.info("""
-    **检测系统**  
-    光谱仪 × 1 | 成像模块 × 1  
-    🟢 正常运行
-    """)
-
-with status_cols[2]:
-    st.info("""
-    **当前任务**  
-    实验ID: EXP-20230515-002  
-    🔄 进行中
-    """)
-
-st.divider()
-
-# 主要内容区 - 两列布局
-main_col1, main_col2 = st.columns([2, 1])
-
-with main_col1:
-    # 液体传输控制
-    st.subheader("液体传输控制")
-    pump_col, valve_col = st.columns(2)
+# 生成亲和力排序图表
+def generate_affinity_ranking():
+    affinity_data = st.session_state.app_state["affinity_data"]
+    if not affinity_data:
+        return None, None
     
-    # 泵控制
-    with pump_col:
+    # 按蛋白分组计算平均亲和力
+    protein_avg = {}
+    for item in affinity_data:
+        if item["protein"] not in protein_avg:
+            protein_avg[item["protein"]] = []
+        protein_avg[item["protein"]].append(item["affinity"])
+    
+    # 计算平均值
+    protein_stats = []
+    for protein, values in protein_avg.items():
+        protein_stats.append({
+            "protein": protein,
+            "avg_affinity": np.mean(values),
+            "std_affinity": np.std(values),
+            "count": len(values)
+        })
+    
+    # 排序
+    protein_stats.sort(key=lambda x: x["avg_affinity"], reverse=True)
+    
+    # 创建排序图表
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=[item["protein"] for item in protein_stats],
+        y=[item["avg_affinity"] for item in protein_stats],
+        error_y=dict(
+            type='data',
+            array=[item["std_affinity"] for item in protein_stats],
+            visible=True
+        ),
+        marker_color=np.linspace(0, 1, len(protein_stats))  # 颜色渐变
+    ))
+    
+    fig.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis_title='蛋白名称',
+        yaxis_title='平均亲和力 (μM⁻¹)',
+        title='不同蛋白亲和力排序',
+        showlegend=False
+    )
+    
+    return fig, protein_stats
+
+# -------------------------- 页面布局开始 --------------------------
+
+# 页面标题和紧急控制区
+st.title("🧪 微流控测试平台控制软件")
+st.caption(f"最后更新: {st.session_state.app_state['last_update']}")
+
+# 顶部状态栏（紧急控制 + 系统状态）
+top_row = st.columns([1, 3])
+with top_row[0]:
+    st.button("⚠️ 紧急停止", on_click=emergency_stop, type="primary", use_container_width=True)
+
+with top_row[1]:
+    status_cols = st.columns(3)
+    with status_cols[0]:
+        st.info("""
+        **液体传输系统**  
+        泵 × 3  
+        🟢 正常运行
+        """, icon="💧")
+    with status_cols[1]:
+        st.info("""
+        **数据分析系统**  
+        FCS数据处理  
+        🟢 正常运行
+        """, icon="📊")
+    with status_cols[2]:
+        st.info("""
+        **当前任务**  
+        实验ID: EXP-20230515-002  
+        🔄 进行中
+        """, icon="🔬")
+
+st.divider()
+
+# 主要工作区（左侧：实验控制 | 右侧：数据分析）
+workspace = st.columns([5, 6])  # 微调比例，数据分析区域略宽以更好展示图表
+
+# -------------------------- 左侧：实验控制区 --------------------------
+with workspace[0]:
+    st.subheader("🔧 实验控制中心")
+    
+    # 1. 泵控制（核心操作，放在最上方）
+    with st.container(border=True):
         st.markdown("### 💧 泵控制")
         for pump_id in [1, 2, 3]:
             pump = st.session_state.app_state["pumps"][pump_id]
             with st.expander(f"泵{pump_id} ({pump['name']})", expanded=True):
-                # 使用HTML布局替代嵌套列，避免Streamlit嵌套限制
-                st.markdown("<div style='display: flex; gap: 15px; margin-bottom: 10px;'>", unsafe_allow_html=True)
+                col_flow, col_time = st.columns(2)
+                with col_flow:
+                    flow = st.number_input(
+                        "流量 (μL/min)", 
+                        min_value=0, 
+                        max_value=1000, 
+                        value=pump["flow"],
+                        key=f"flow_{pump_id}"
+                    )
+                    st.session_state.app_state["pumps"][pump_id]["flow"] = flow
                 
-                # 左侧 - 流量输入
-                st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-                flow = st.number_input(
-                    "流量 (μL/min)", 
-                    min_value=0, 
-                    max_value=1000, 
-                    value=pump["flow"],
-                    key=f"flow_{pump_id}"
-                )
-                st.session_state.app_state["pumps"][pump_id]["flow"] = flow
-                st.markdown("</div>", unsafe_allow_html=True)
+                with col_time:
+                    time_val = st.number_input(
+                        "时间 (s)", 
+                        min_value=1, 
+                        max_value=3600, 
+                        value=pump["time"],
+                        key=f"time_{pump_id}"
+                    )
+                    st.session_state.app_state["pumps"][pump_id]["time"] = time_val
                 
-                # 右侧 - 时间输入
-                st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-                time_val = st.number_input(
-                    "时间 (s)", 
-                    min_value=1, 
-                    max_value=3600, 
-                    value=pump["time"],
-                    key=f"time_{pump_id}"
-                )
-                st.session_state.app_state["pumps"][pump_id]["time"] = time_val
-                st.markdown("</div>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                run_col1, run_col2 = st.columns(2)
+                with run_col1:
+                    st.button(
+                        "启动", 
+                        on_click=start_pump, 
+                        args=(pump_id,),
+                        disabled=pump["running"],
+                        key=f"start_{pump_id}",
+                        type="primary",
+                        use_container_width=True
+                    )
                 
-                # 按钮布局
-                st.markdown("<div style='display: flex; gap: 15px;'>", unsafe_allow_html=True)
-                st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-                if st.button(
-                    "启动", 
-                    on_click=start_pump, 
-                    args=(pump_id,),
-                    disabled=pump["running"],
-                    key=f"start_{pump_id}",
-                    type="primary"
-                ):
-                    pass
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-                if st.button(
-                    "停止", 
-                    on_click=stop_pump, 
-                    args=(pump_id,),
-                    disabled=not pump["running"],
-                    key=f"stop_{pump_id}"
-                ):
-                    pass
-                st.markdown("</div>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                with run_col2:
+                    st.button(
+                        "停止", 
+                        on_click=stop_pump, 
+                        args=(pump_id,),
+                        disabled=not pump["running"],
+                        key=f"stop_{pump_id}",
+                        use_container_width=True
+                    )
                 
                 status = "运行中 ⚠️" if pump["running"] else "就绪 ✅"
                 st.caption(f"状态: {status}")
     
-    # 阀门控制 - 使用HTML布局替代嵌套列
-    with valve_col:
-        st.markdown("### 🔄 阀门控制")
-        
-        # 使用HTML flexbox布局实现阀门网格，避免嵌套列
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 15px;'>", unsafe_allow_html=True)
-        
-        # 为所有6个阀门创建统一的布局
-        for valve_id in range(1, 7):
-            valve = st.session_state.app_state["valves"][valve_id]
-            # 每个阀门占用大约50%宽度，留出间隙
-            st.markdown("<div style='flex: 1 1 calc(50% - 10px); min-width: 200px;'>", unsafe_allow_html=True)
-            
-            st.markdown(f"**阀门{valve_id}**")
-            state = valve["state"]
-            is_open = state == "open"
-            
-            if st.button(
-                "开" if not is_open else "已开 ✅", 
-                on_click=toggle_valve, 
-                args=(valve_id,),
-                disabled=is_open,
-                key=f"open_{valve_id}"
-            ):
-                pass
-            
-            if st.button(
-                "关" if is_open else "已关 ❌", 
-                on_click=toggle_valve, 
-                args=(valve_id,),
-                disabled=not is_open,
-                key=f"close_{valve_id}"
-            ):
-                pass
-            
-            st.caption(valve["description"])
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # 继续处理其他代码
-        st.button("预设通路模式", key="preset_valves")
-        
-        # 检测控制
-        st.subheader("检测控制")
-        # 使用HTML布局替代嵌套列
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 15px;'>", unsafe_allow_html=True)
-        
-        # 光谱检测部分
-        st.markdown("<div style='flex: 1 1 100%; min-width: 300px;'>", unsafe_allow_html=True)
-        st.markdown("### 📈 光谱检测")
-        with st.expander("光谱参数设置", expanded=True):
-            # 使用HTML布局替代嵌套列
-            st.markdown("<div style='display: flex; gap: 15px; margin-bottom: 10px;'>", unsafe_allow_html=True)
-            
-            # 左侧 - 起始波长
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            start = st.number_input(
-                "起始波长 (nm)", 
-                min_value=300, 
-                max_value=1000, 
-                value=st.session_state.app_state["spectra_params"]["start"],
-                key="spectra_start"
-            )
-            st.session_state.app_state["spectra_params"]["start"] = start
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            # 右侧 - 结束波长
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            end = st.number_input(
-                "结束波长 (nm)", 
-                min_value=300, 
-                max_value=1000, 
-                value=st.session_state.app_state["spectra_params"]["end"],
-                key="spectra_end"
-            )
-            st.session_state.app_state["spectra_params"]["end"] = end
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            mode = st.selectbox(
-                "检测模式",
-                ["absorbance", "fluorescence", "transmittance"],
-                index=0,
-                key="spectra_mode"
-            )
-            st.session_state.app_state["spectra_params"]["mode"] = mode
-            
-            interval = st.number_input(
-                "检测间隔 (s)",
-                min_value=1,
-                max_value=300,
-                value=st.session_state.app_state["spectra_params"]["interval"],
-                key="spectra_interval"
-            )
-            st.session_state.app_state["spectra_params"]["interval"] = interval
-            
-            st.button(
-                "开始光谱检测",
-                on_click=start_spectra_detection,
-                key="start_spectra",
-                type="primary"
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # 成像检测部分
-        st.markdown("<div style='flex: 1 1 100%; min-width: 300px;'>", unsafe_allow_html=True)
-        st.markdown("### 📷 成像检测")
-        with st.expander("成像参数设置", expanded=True):
-            # 使用HTML布局替代嵌套列
-            st.markdown("<div style='display: flex; gap: 15px; margin-bottom: 10px;'>", unsafe_allow_html=True)
-            
-            # 左侧 - 曝光时间
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            exposure = st.number_input(
-                "曝光时间 (ms)",
-                min_value=1,
-                max_value=1000,
-                value=st.session_state.app_state["camera_params"]["exposure"],
-                key="camera_exposure"
-            )
-            st.session_state.app_state["camera_params"]["exposure"] = exposure
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            # 右侧 - 放大倍数
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            magnification = st.selectbox(
-                "放大倍数",
-                ["10x", "20x", "40x"],
-                index=1,
-                key="camera_magnification"
-            )
-            st.session_state.app_state["camera_params"]["magnification"] = magnification
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            # 图像预览区域
-            st.markdown("**图像预览**")
-            preview_placeholder = st.empty()
-            if st.session_state.app_state["camera_params"]["image_captured"]:
-                preview_placeholder.image(
-                    st.session_state.app_state["camera_params"]["image_url"],
-                    caption="捕获的图像",
-                    use_column_width=True
-                )
-            else:
-                preview_placeholder.info("实时图像预览区域")
-            
-            st.button(
-                "捕获图像",
-                on_click=capture_image,
-                key="capture_image",
-                type="primary"
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # 实验流程设计
-        st.subheader("实验流程设计")
+    # 2. 实验流程（次重要，放在泵控制下方）
+    with st.container(border=True):
+        st.markdown("### 📋 实验流程设计")
         with st.expander("当前流程: 蛋白反应检测", expanded=True):
             st.markdown("包含 5 个步骤 | 预计时长: 15分钟")
             
@@ -497,12 +391,14 @@ with main_col1:
                             {step}
                         </div>
                         <div style="flex-grow: 1;">
-                            {[
-                                "注入蛋白液", "注入缓冲液A", "混合反应", "光谱检测", "成像检测"][step-1]}
+                            {
+                                ["注入蛋白液", "注入缓冲液A", "混合反应", "数据采集", "结果分析"][step-1]
+                            }
                             <div style="font-size: 12px; color: #666;">
-                                {[
-                                    "泵1 | 50μL/min | 10秒", "泵2 | 30μL/min | 15秒", 
-                                    "静置 | 5分钟", "400-700nm | 吸光度", "20x | 50ms曝光"][step-1]}
+                                {
+                                    ["泵1 | 50μL/min | 10秒", "泵2 | 30μL/min | 15秒", 
+                                     "静置 | 5分钟", "FCS检测", "亲和力分析"][step-1]
+                                }
                             </div>
                         </div>
                         <div>
@@ -513,112 +409,131 @@ with main_col1:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # 使用HTML布局替代嵌套列
-            st.markdown("<div style='display: flex; gap: 15px;'>", unsafe_allow_html=True)
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            st.button("➕ 添加步骤", key="add_step")
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            st.markdown("<div style='flex: 1;'>", unsafe_allow_html=True)
-            st.button("▶️ 运行流程", on_click=run_experiment, key="run_process", type="primary")
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                st.button("➕ 添加步骤", key="add_step", use_container_width=True)
+            with col_btn2:
+                st.button("▶️ 运行流程", on_click=run_experiment, key="run_process", 
+                         type="primary", use_container_width=True)
     
-with main_col2:
-    # 实时监测
-    st.subheader("实时监测")
-    with st.expander("反应进度", expanded=True):
-        progress = st.session_state.app_state["experiment"]["progress"]
-        st.progress(progress)
-        st.markdown(f"步骤 {st.session_state.app_state['experiment']['current_step']}/5 | 预计剩余: {st.session_state.app_state['experiment']['remaining_time']}")
-    
-    with st.expander("实时数据", expanded=True):
-        st.plotly_chart(generate_realtime_chart(), use_container_width=True)
-    
-    with st.expander("系统日志", expanded=True):
-        log_text = "\n".join(st.session_state.app_state["system_log"][-10:])  # 显示最后10条日志
-        st.text_area("系统日志", log_text, height=200, disabled=True)
-    
-    st.divider()
-    
-    # 检测结果
-    st.subheader("检测结果")
-    with st.expander("最新光谱数据", expanded=True):
-        st.plotly_chart(generate_spectra_chart(), use_container_width=True)
-        st.button("查看历史", key="view_history")
-    
-    with st.expander("分析结果", expanded=True):
-        st.markdown("""
-        | 指标 | 结果 |
-        |------|------|
-        | 反应程度 | 35% |
-        | 峰值波长 | 527 nm |
-        | 浓度估算 | 0.32 mg/mL |
+    # 3. 实时监测（辅助功能，放在最下方）
+    with st.container(border=True):
+        st.markdown("### 🔍 实时监测")
+        progress_cols = st.columns([1, 2])
+        with progress_cols[0]:
+            st.markdown("#### 反应进度")
+            progress = st.session_state.app_state["experiment"]["progress"]
+            st.progress(progress)
+            st.markdown(f"步骤 {st.session_state.app_state['experiment']['current_step']}/5")
+            st.markdown(f"剩余时间: {st.session_state.app_state['experiment']['remaining_time']}")
         
-        **结果判定**: 反应正常进行中，建议继续监测。预计还需10分钟达到稳定状态。
-        """)
-        st.button("生成详细报告", key="generate_report")
-# -------------------- KD值计算功能 (新增内容) --------------------
-st.divider()
-st.subheader("KD值计算工具")
+        with progress_cols[1]:
+            st.markdown("#### 实时数据")
+            st.plotly_chart(generate_realtime_chart(), use_container_width=True)
 
-with st.expander("Excel数据导入与KD值计算", expanded=True):
-    # 文件上传组件
-    kd_file = st.file_uploader("上传Excel数据文件", type=["xlsx", "xls"], key="kd_calculator_uploader")
+# -------------------------- 右侧：数据分析区 --------------------------
+with workspace[1]:
+    st.subheader("📈 FCS亲和力数据分析")
     
-    if kd_file is not None:
-        try:
-            # 动态导入pandas以避免影响原有功能
-            import pandas as pd
+    # 1. 数据上传（数据分析入口，放在最上方）
+    with st.container(border=True):
+        st.markdown("### 📂 数据上传")
+        uploaded_file = st.file_uploader("上传FCS仪器测得的CSV数据文件", type=["csv"], 
+                                        label_visibility="collapsed")
+        
+        # 数据格式说明（使用折叠面板节省空间）
+        with st.expander("📋 数据格式要求", expanded=False):
+            st.markdown("""
+            CSV文件需包含以下列：
+            - protein: 蛋白名称（字符串）
+            - concentration: 浓度值（数值，单位μM）
+            - affinity: 亲和力值（数值，单位μM⁻¹）
             
-            # 读取Excel文件第一张工作表
-            df = pd.read_excel(kd_file, sheet_name=0)
+            示例数据：
+            ```
+            protein,concentration,affinity
+            蛋白A,0.1,2.3
+            蛋白A,0.2,3.8
+            蛋白B,0.1,1.9
+            蛋白B,0.3,4.2
+            ```
+            """)
+        
+        # 处理上传文件
+        if uploaded_file is not None and uploaded_file.name not in st.session_state.app_state["uploaded_files"]:
+            data, message = parse_fcs_data(uploaded_file)
             
-            # 显示数据预览
-            st.markdown("### 数据预览")
-            st.dataframe(df.head(5))
-            
-            # 提取指定单元格数据 (第二行第三、四、五列)
-            # 注意：pandas使用0-based索引
-            row_index = 1  # 第二行
-            col_indices = [2, 3, 4]  # 第三、四、五列
-            
-            # 检查数据是否存在
-            if len(df) > row_index and len(df.columns) > max(col_indices):
-                m1_plus_m1m2 = df.iloc[row_index, col_indices[0]]
-                m2_plus_m1m2 = df.iloc[row_index, col_indices[1]]
-                m1m2 = df.iloc[row_index, col_indices[2]]
-                
-                # 显示提取的数据
-                st.markdown("### 提取的参数值")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("m1+m1m2", f"{m1_plus_m1m2:.4f}")
-                with col2:
-                    st.metric("m2+m1m2", f"{m2_plus_m1m2:.4f}")
-                with col3:
-                    st.metric("m1m2", f"{m1m2:.4f}")
-                
-                # 计算KD值
-                m1 = m1_plus_m1m2 - m1m2
-                m2 = m2_plus_m1m2 - m1m2
-                
-                if m1m2 != 0:
-                    kd_value = (m1 * m2) / m1m2
-                    
-                    # 显示计算结果
-                    st.markdown("### KD值计算结果")
-                    st.latex(r"KD = \frac{m1 \times m2}{m1m2}")
-                    st.success(f"KD = {kd_value:.6f}")
-                    
-                    # 添加到系统日志
-                    add_system_log(f"KD值计算完成: {kd_value:.6f}")
-                else:
-                    st.error("无法计算KD值: m1m2的值不能为零")
+            if data:
+                # 保存数据
+                st.session_state.app_state["affinity_data"].extend(data)
+                st.session_state.app_state["uploaded_files"].append(uploaded_file.name)
+                add_system_log(f"已上传FCS数据文件: {uploaded_file.name}，包含{len(data)}条记录")
+                update_last_update()
+                st.success(f"文件上传成功！{message}，新增{len(data)}条数据")
             else:
-                st.error("Excel文件格式不正确，无法找到指定单元格数据")
-        except Exception as e:
-            st.error(f"数据处理错误: {str(e)}")
-            add_system_log(f"KD值计算失败: {str(e)}")
-    else:
-        st.info("请上传包含实验数据的Excel文件")
+                st.error(f"文件上传失败: {message}")
+        
+        # 数据管理按钮
+        col_data1, col_data2 = st.columns(2)
+        with col_data1:
+            if st.button("👀 查看当前数据", type="secondary", use_container_width=True):
+                if st.session_state.app_state["affinity_data"]:
+                    df = pd.DataFrame(st.session_state.app_state["affinity_data"])
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("暂无数据")
+        
+        with col_data2:
+            if st.button("🗑️ 清除所有数据", type="secondary", use_container_width=True):
+                st.session_state.app_state["affinity_data"] = []
+                st.session_state.app_state["uploaded_files"] = []
+                add_system_log("已清除所有亲和力数据")
+                st.success("所有数据已清除")
+    
+    # 2. 亲和力曲线（核心分析结果，放在中间）
+    with st.container(border=True):
+        st.markdown("### 📉 亲和力曲线")
+        affin_fig = generate_affinity_chart()
+        if affin_fig:
+            st.plotly_chart(affin_fig, use_container_width=True)
+            
+            # 图表注释
+            st.markdown("""
+            **图表注释**:  
+            - 不同颜色代表不同蛋白的亲和力数据  
+            - 实线点表示实际测量值  
+            - 虚线表示基于结合模型的拟合曲线  
+            - 亲和力值越高，表示蛋白结合能力越强
+            """)
+        else:
+            st.info("尚未上传亲和力数据，请先上传FCS数据文件")
+    
+    # 3. 亲和力排序（分析结论，放在最下方）
+    with st.container(border=True):
+        st.markdown("### 🏆 蛋白亲和力排序")
+        ranking_fig, protein_stats = generate_affinity_ranking()
+        if ranking_fig and protein_stats:
+            st.plotly_chart(ranking_fig, use_container_width=True)
+            
+            # 显示详细统计数据
+            st.markdown("#### 详细统计结果")
+            sorted_proteins = sorted(protein_stats, key=lambda x: x["avg_affinity"], reverse=True)
+            for i, item in enumerate(sorted_proteins, 1):
+                st.markdown(f"{i}. **{item['protein']}**: 平均亲和力 = {item['avg_affinity']:.3f} ± {item['std_affinity']:.3f} (n={item['count']})")
+            
+            # 显示最高亲和力蛋白
+            top_protein = sorted_proteins[0]
+            st.success(f"最高亲和力蛋白: {top_protein['protein']} (平均值: {top_protein['avg_affinity']:.3f})")
+        else:
+            st.info("暂无足够数据进行排序分析")
+
+# 底部系统日志（全宽显示，方便查看完整记录）
+st.divider()
+with st.container(border=True):
+    st.subheader("📝 系统日志")
+    log_text = "\n".join(reversed(st.session_state.app_state["system_log"]))
+    # 移除不支持的use_container_width参数
+    st.text_area("系统操作记录", log_text, height=150, disabled=True)
+
+# -------------------------- 页面布局结束 --------------------------
+    
