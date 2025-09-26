@@ -6,14 +6,20 @@ from scipy.optimize import curve_fit
 from datetime import datetime
 import time
 import io
-
+import streamlit_autorefresh
 # 页面配置
 st.set_page_config(
     page_title="微流控测试平台控制软件",
     page_icon="🧪",
-    layout="wide"
+    layout="centered"
 )
-
+if 'message_display' not in st.session_state:
+    st.session_state.message_display = {
+        'show': False,
+        'type': '',  # 'warning' 或 'success'
+        'content': '',
+        'timestamp': 0
+    }
 # 初始化状态
 if 'app_state' not in st.session_state:
     st.session_state.app_state = {
@@ -39,7 +45,8 @@ if 'app_state' not in st.session_state:
         ],
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "affinity_data": [],  # 存储格式: {"protein": "蛋白A", "concentration": 0.1, "affinity": 1.2, ...}
-        "uploaded_files": []  # 存储已上传的文件名
+        "uploaded_files": [] , # 存储已上传的文件名
+        "emergency_status": False  # 添加紧急停止状态标志
     }
 
 # 辅助函数：添加系统日志
@@ -98,17 +105,33 @@ def fit_affinity_curve(concentrations, affinities):
 
 # 回调函数：启动泵
 def start_pump(pump_id):
+    # 只设置泵的运行状态，不阻塞界面
     pump = st.session_state.app_state["pumps"][pump_id]
     pump["running"] = True
     add_system_log(f"泵{pump_id}启动: {pump['flow']}μL/min, {pump['time']}秒")
     update_last_update()
     
-    with st.spinner(f"泵{pump_id}运行中..."):
-        time.sleep(pump["time"] / 10)  # 加速模拟
-    pump["running"] = False
-    add_system_log(f"泵{pump_id}已停止")
-    update_last_update()
+    # 使用Streamlit的session_state记录启动时间
+    st.session_state.app_state[f"pump_{pump_id}_start_time"] = time.time()
+    st.session_state.app_state[f"pump_{pump_id}_duration"] = pump["time"]*5 #加速
+    
+    # 显示运行中状态，但不阻塞界面
+    st.info(f"泵{pump_id}运行中...")
 
+# 在应用主循环中添加一个检查函数
+def check_pump_status():
+    for pump_id in st.session_state.app_state["pumps"]:
+        if (st.session_state.app_state["pumps"][pump_id]["running"] and 
+            f"pump_{pump_id}_start_time" in st.session_state.app_state):
+            elapsed = time.time() - st.session_state.app_state[f"pump_{pump_id}_start_time"]
+            if elapsed >= st.session_state.app_state[f"pump_{pump_id}_duration"]:
+                # 泵运行时间已到，停止泵
+                st.session_state.app_state["pumps"][pump_id]["running"] = False
+                add_system_log(f"泵{pump_id}已停止")
+                update_last_update()
+                # 清理临时状态
+                del st.session_state.app_state[f"pump_{pump_id}_start_time"]
+                del st.session_state.app_state[f"pump_{pump_id}_duration"]
 # 回调函数：停止泵
 def stop_pump(pump_id):
     st.session_state.app_state["pumps"][pump_id]["running"] = False
@@ -149,11 +172,28 @@ def emergency_stop():
     for pump_id in st.session_state.app_state["pumps"]:
         if st.session_state.app_state["pumps"][pump_id]["running"]:
             st.session_state.app_state["pumps"][pump_id]["running"] = False
-    
+    st.session_state.app_state["emergency_status"] = True  # 设置紧急停止状态为True
     add_system_log("系统紧急停止已执行")
     update_last_update()
-    st.warning("紧急停止已执行，所有设备已停止运行")
-
+    # st.warning("紧急停止已执行，所有设备已停止运行")
+    st.session_state.message_display = {
+        'show': True,
+        'type': 'warning',
+        'content': "紧急停止已执行，所有设备已停止运行",
+        'timestamp': time.time()
+    }
+# 回调函数：紧急停止后重置系统
+def reset_after_emergency():
+    st.session_state.app_state["emergency_status"] = False  # 重置紧急停止状态
+    add_system_log("紧急情况已排查完毕，系统恢复正常状态")
+    update_last_update()
+    # st.success("系统已恢复正常，可以重新开始实验")
+    st.session_state.message_display = {
+        'show': True,
+        'type': 'success',
+        'content': "系统已恢复正常，可以重新开始实验",
+        'timestamp': time.time()
+    }
 # 生成实时数据图表
 def generate_realtime_chart():
     x = list(range(20))
@@ -280,16 +320,25 @@ def generate_affinity_ranking():
     return fig, protein_stats
 
 # -------------------------- 页面布局开始 --------------------------
-
+check_pump_status()
 # 页面标题和紧急控制区
 st.title("🧪 微流控测试平台控制软件")
 st.caption(f"最后更新: {st.session_state.app_state['last_update']}")
-
+if st.session_state.message_display['show']:
+    elapsed = time.time() - st.session_state.message_display['timestamp']
+    if elapsed < 5:  # 消息显示5秒
+        if st.session_state.message_display['type'] == 'warning':
+            st.warning(st.session_state.message_display['content'])
+        else:
+            st.success(st.session_state.message_display['content'])
+    else:
+        st.session_state.message_display['show'] = False
 # 顶部状态栏（紧急控制 + 系统状态）
 top_row = st.columns([1, 3])
 with top_row[0]:
     st.button("⚠️ 紧急停止", on_click=emergency_stop, type="primary", use_container_width=True)
-
+    if st.session_state.app_state["emergency_status"]:
+        st.button("✅ 已排查完毕，重新实验", on_click=reset_after_emergency, type="secondary", use_container_width=True)
 with top_row[1]:
     status_cols = st.columns(3)
     with status_cols[0]:
@@ -353,7 +402,7 @@ with workspace[0]:
                         "启动", 
                         on_click=start_pump, 
                         args=(pump_id,),
-                        disabled=pump["running"],
+                        disabled=pump["running"] or st.session_state.app_state["emergency_status"],  # 添加紧急停止状态检查
                         key=f"start_{pump_id}",
                         type="primary",
                         use_container_width=True
@@ -536,4 +585,6 @@ with st.container(border=True):
     st.text_area("系统操作记录", log_text, height=150, disabled=True)
 
 # -------------------------- 页面布局结束 --------------------------
-    
+
+# 添加自动刷新，间隔1000毫秒（2秒）
+streamlit_autorefresh.st_autorefresh(interval=2000, key="auto_refresh")
