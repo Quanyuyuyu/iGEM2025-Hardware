@@ -24,24 +24,24 @@ if 'message_display' not in st.session_state:
 if 'app_state' not in st.session_state:
     st.session_state.app_state = {
         "pumps": {
-            1: { "running": False, "flow": 50, "time": 10, "name": "蛋白液" },
-            2: { "running": False, "flow": 30, "time": 15, "name": "缓冲液A" },
+            1: { "running": False, "flow": 50, "time": 10, "name": "蛋白液", "completed": False },
+            2: { "running": False, "flow": 30, "time": 15, "name": "缓冲液A", "completed": False },
             3: { "running": False, "flow": 40, "time": 20, "name": "缓冲液B" }
         },
         "experiment": {
-            "current_step": 2,
+            "current_step": 0,
             "total_steps": 5,
-            "progress": 35,
-            "remaining_time": "9分钟"
+            "progress": 0,
+            "remaining_time": "--分钟"
         },
         "system_log": [
             "[14:28:15] 系统启动完成",
-            "[14:28:30] 加载实验流程: 蛋白反应检测",
-            "[14:29:05] 泵1启动: 50μL/min, 10秒",
-            "[14:29:15] 泵1已停止",
-            "[14:29:20] 泵2启动: 30μL/min, 15秒",
-            "[14:29:35] 泵2已停止",
-            "[14:29:36] 开始混合反应，等待5分钟"
+            "[14:28:30] 加载实验流程: 蛋白反应检测"
+            # "[14:29:05] 泵1启动: 50μL/min, 10秒",
+            # "[14:29:15] 泵1已停止",
+            # "[14:29:20] 泵2启动: 30μL/min, 15秒",
+            # "[14:29:35] 泵2已停止",
+            # "[14:29:36] 开始混合反应，等待5分钟"
         ],
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "affinity_data": [],  # 存储格式: {"protein": "蛋白A", "concentration": 0.1, "affinity": 1.2, ...}
@@ -113,7 +113,7 @@ def start_pump(pump_id):
     
     # 使用Streamlit的session_state记录启动时间
     st.session_state.app_state[f"pump_{pump_id}_start_time"] = time.time()
-    st.session_state.app_state[f"pump_{pump_id}_duration"] = pump["time"]*5 #加速
+    st.session_state.app_state[f"pump_{pump_id}_duration"] = pump["time"]/5 #加速
     
     # 显示运行中状态，但不阻塞界面
     st.info(f"泵{pump_id}运行中...")
@@ -128,6 +128,9 @@ def check_pump_status():
                 # 泵运行时间已到，停止泵
                 st.session_state.app_state["pumps"][pump_id]["running"] = False
                 add_system_log(f"泵{pump_id}已停止")
+                # 对于泵1和泵2，设置完成标志
+                if pump_id in [1, 2]:
+                    st.session_state.app_state["pumps"][pump_id]["completed"] = True
                 update_last_update()
                 # 清理临时状态
                 del st.session_state.app_state[f"pump_{pump_id}_start_time"]
@@ -429,9 +432,30 @@ with workspace[0]:
             
             # 流程步骤
             for step in range(1, 6):
-                bg_color = "#e6f7ff" if step <= 2 else "#f5f5f5"
-                step_num_color = "#1890ff" if step <= 2 else "#8c8c8c"
-                
+                # 根据步骤是否完成设置颜色
+                if step == 1:
+                    bg_color = "#e6f7ff" if st.session_state.app_state["pumps"][1]["completed"] else "#f5f5f5"
+                    step_num_color = "#1890ff" if st.session_state.app_state["pumps"][1]["completed"] else "#8c8c8c"
+                elif step == 2:
+                    bg_color = "#e6f7ff" if st.session_state.app_state["pumps"][2]["completed"] else "#f5f5f5"
+                    step_num_color = "#1890ff" if st.session_state.app_state["pumps"][2]["completed"] else "#8c8c8c"
+                else:
+                    bg_color = "#f5f5f5"
+                    step_num_color = "#8c8c8c"
+    
+    # 根据步骤和泵的完成状态生成显示文本
+                if step == 1:
+                    if st.session_state.app_state["pumps"][1]["completed"]:
+                        step_detail = f"泵1 | {st.session_state.app_state['pumps'][1]['flow']}μL/min | {st.session_state.app_state['pumps'][1]['time']}秒"
+                    else:
+                        step_detail = "泵1 | --μL/min | --秒"
+                elif step == 2:
+                    if st.session_state.app_state["pumps"][2]["completed"]:
+                        step_detail = f"泵2 | {st.session_state.app_state['pumps'][2]['flow']}μL/min | {st.session_state.app_state['pumps'][2]['time']}秒"
+                    else:
+                        step_detail = "泵2 | --μL/min | --秒"
+                else:
+                    step_detail = ["静置 | 5分钟", "FCS检测", "亲和力分析"][step-3]             
                 st.markdown(f"""
                 <div style="background-color: {bg_color}; padding: 10px; border-radius: 5px; margin: 5px 0;">
                     <div style="display: flex; align-items: center;">
@@ -444,10 +468,7 @@ with workspace[0]:
                                 ["注入蛋白液", "注入缓冲液A", "混合反应", "数据采集", "结果分析"][step-1]
                             }
                             <div style="font-size: 12px; color: #666;">
-                                {
-                                    ["泵1 | 50μL/min | 10秒", "泵2 | 30μL/min | 15秒", 
-                                     "静置 | 5分钟", "FCS检测", "亲和力分析"][step-1]
-                                }
+                                {step_detail}
                             </div>
                         </div>
                         <div>
@@ -462,6 +483,8 @@ with workspace[0]:
             with col_btn1:
                 st.button("➕ 添加步骤", key="add_step", use_container_width=True)
             with col_btn2:
+                 # 只有当泵1和泵2都完成时，才能点击运行流程按钮
+                can_run = st.session_state.app_state["pumps"][1]["completed"] and st.session_state.app_state["pumps"][2]["completed"]
                 st.button("▶️ 运行流程", on_click=run_experiment, key="run_process", 
                          type="primary", use_container_width=True)
     
@@ -587,4 +610,4 @@ with st.container(border=True):
 # -------------------------- 页面布局结束 --------------------------
 
 # 添加自动刷新，间隔1000毫秒（2秒）
-streamlit_autorefresh.st_autorefresh(interval=2000, key="auto_refresh")
+streamlit_autorefresh.st_autorefresh(interval=5000, key="auto_refresh")
