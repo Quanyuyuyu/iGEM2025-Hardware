@@ -32,7 +32,8 @@ if 'app_state' not in st.session_state:
             "current_step": 0,
             "total_steps": 5,
             "progress": 0,
-            "remaining_time": "--分钟"
+            "remaining_time": "--分钟",
+            "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}  # 添加步骤完成状态
         },
         "system_log": [
             "[14:28:15] 系统启动完成",
@@ -131,7 +132,22 @@ def check_pump_status():
                 # 对于泵1和泵2，设置完成标志
                 if pump_id in [1, 2]:
                     st.session_state.app_state["pumps"][pump_id]["completed"] = True
+                    
+                    # 计算已完成的泵数量，而不是根据泵ID设置current_step
+                    completed_pumps = 0
+                    for p in [1, 2]:
+                        if st.session_state.app_state["pumps"][p]["completed"]:
+                            completed_pumps += 1
+                    
+                    # 只有当已完成的泵数量大于当前步骤时，才更新步骤和进度
+                    if completed_pumps > st.session_state.app_state["experiment"]["current_step"]:
+                        st.session_state.app_state["experiment"]["current_step"] = completed_pumps
+                        st.session_state.app_state["experiment"]["steps_completed"][completed_pumps] = True
+                        # 更新进度条
+                        st.session_state.app_state["experiment"]["progress"] = 20 * completed_pumps
+                
                 update_last_update()
+                
                 # 清理临时状态
                 del st.session_state.app_state[f"pump_{pump_id}_start_time"]
                 del st.session_state.app_state[f"pump_{pump_id}_duration"]
@@ -145,30 +161,69 @@ def stop_pump(pump_id):
 def run_experiment():
     add_system_log("开始执行实验流程: 蛋白反应检测")
     update_last_update()
+    # 设置初始状态为步骤3
+    st.session_state.app_state["experiment"]["current_step"] = 3
+    st.session_state.app_state["experiment"]["progress"] = 40  # 对应步骤3的进度
+    st.session_state.app_state["experiment"]["experiment_start_time"] = time.time()
+    st.session_state.app_state["experiment"]["current_step_start_time"] = time.time()
+    st.session_state.app_state["experiment"]["running"] = True
+     # 移除临时进度条和状态文本
+    # progress_bar = st.progress(35)
+    # status_text = st.empty()
+def check_experiment_progress():
+    if not st.session_state.app_state["experiment"].get("running", False):
+        return
     
-    progress_bar = st.progress(35)
-    status_text = st.empty()
+    current_step = st.session_state.app_state["experiment"]["current_step"]
+    step_start_time = st.session_state.app_state["experiment"]["current_step_start_time"]
     
-    for progress in range(36, 101):
-        st.session_state.app_state["experiment"]["progress"] = progress
-        
-        if progress >= 60:
-            st.session_state.app_state["experiment"]["current_step"] = 3
-        if progress >= 80:
-            st.session_state.app_state["experiment"]["current_step"] = 4
-        if progress == 100:
-            st.session_state.app_state["experiment"]["current_step"] = 5
-        
-        remaining = 9 - (progress - 35) // 7
-        st.session_state.app_state["experiment"]["remaining_time"] = f"{remaining}分钟"
-        
-        progress_bar.progress(progress)
-        status_text.text(f"进度: {progress}% | 步骤 {st.session_state.app_state['experiment']['current_step']}/5 | 剩余: {remaining}分钟")
-        time.sleep(0.1)  # 加速模拟
+    # 定义各步骤的持续时间（秒）
+    step_durations = {
+        3: 10,  # 混合反应（原计划5分钟，缩短到10秒）
+        4: 10,  # 数据采集（原计划5分钟，缩短到10秒）
+        5: 1    # 结果分析
+    }
     
-    add_system_log("实验流程执行完成")
-    update_last_update()
-    st.success("实验流程已完成")
+    # 检查当前步骤是否完成
+    if current_step in step_durations and time.time() - step_start_time >= step_durations[current_step]:
+        # 步骤完成，记录日志
+        if current_step == 3:
+            add_system_log("步骤3完成: 混合反应结束")
+            st.session_state.app_state["experiment"]["steps_completed"][3] = True
+            st.session_state.app_state["experiment"]["progress"] = 60
+        elif current_step == 4:
+            add_system_log("步骤4完成: FCS数据采集结束")
+            st.session_state.app_state["experiment"]["steps_completed"][4] = True
+            st.session_state.app_state["experiment"]["progress"] = 80
+        elif current_step == 5:
+            add_system_log("步骤5完成: 亲和力数据分析结束")
+            st.session_state.app_state["experiment"]["steps_completed"][5] = True
+            st.session_state.app_state["experiment"]["progress"] = 100
+            st.session_state.app_state["experiment"]["remaining_time"] = "0分钟"
+            add_system_log("实验流程执行完成")
+            st.session_state.app_state["experiment"]["running"] = False
+            st.success("实验流程已完成")
+        
+        update_last_update()
+        
+        # 进入下一步（如果还有）
+        if current_step < 5:
+            current_step += 1
+            st.session_state.app_state["experiment"]["current_step"] = current_step
+            st.session_state.app_state["experiment"]["current_step_start_time"] = time.time()
+            
+            # 记录下一步开始的日志
+            if current_step == 4:
+                add_system_log("步骤4开始: FCS数据采集，等待5分钟")
+            elif current_step == 5:
+                add_system_log("步骤5开始: 亲和力数据分析")
+    else:
+        # 更新剩余时间
+        if current_step in step_durations:
+            remaining = int(step_durations[current_step] - (time.time() - step_start_time))
+            st.session_state.app_state["experiment"]["remaining_time"] = f"{remaining//60}分{remaining%60}秒"
+    
+    
 
 # 回调函数：紧急停止
 def emergency_stop():
@@ -188,6 +243,19 @@ def emergency_stop():
 # 回调函数：紧急停止后重置系统
 def reset_after_emergency():
     st.session_state.app_state["emergency_status"] = False  # 重置紧急停止状态
+     # 重置实验相关状态，将步骤归零
+    st.session_state.app_state["experiment"] = {
+        "current_step": 0,
+        "total_steps": 5,
+        "progress": 0,
+        "remaining_time": "--分钟",
+        "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}  # 重置步骤完成状态
+    }
+    # 重置泵的完成状态
+    for pump_id in [1, 2]:
+        if "completed" in st.session_state.app_state["pumps"][pump_id]:
+            st.session_state.app_state["pumps"][pump_id]["completed"] = False
+    
     add_system_log("紧急情况已排查完毕，系统恢复正常状态")
     update_last_update()
     # st.success("系统已恢复正常，可以重新开始实验")
@@ -321,8 +389,11 @@ def generate_affinity_ranking():
     )
     
     return fig, protein_stats
+# 在页面布局前添加这行代码
+check_experiment_progress()
 
 # -------------------------- 页面布局开始 --------------------------
+# workspace = st.columns([1.5, 1])//？
 check_pump_status()
 # 页面标题和紧急控制区
 st.title("🧪 微流控测试平台控制软件")
@@ -440,8 +511,9 @@ with workspace[0]:
                     bg_color = "#e6f7ff" if st.session_state.app_state["pumps"][2]["completed"] else "#f5f5f5"
                     step_num_color = "#1890ff" if st.session_state.app_state["pumps"][2]["completed"] else "#8c8c8c"
                 else:
-                    bg_color = "#f5f5f5"
-                    step_num_color = "#8c8c8c"
+                     # 对于步骤3-5，根据steps_completed状态设置颜色
+                    bg_color = "#e6f7ff" if st.session_state.app_state["experiment"]["steps_completed"].get(step, False) else "#f5f5f5"
+                    step_num_color = "#1890ff" if st.session_state.app_state["experiment"]["steps_completed"].get(step, False) else "#8c8c8c"
     
     # 根据步骤和泵的完成状态生成显示文本
                 if step == 1:
@@ -486,7 +558,7 @@ with workspace[0]:
                  # 只有当泵1和泵2都完成时，才能点击运行流程按钮
                 can_run = st.session_state.app_state["pumps"][1]["completed"] and st.session_state.app_state["pumps"][2]["completed"]
                 st.button("▶️ 运行流程", on_click=run_experiment, key="run_process", 
-                         type="primary", use_container_width=True)
+                         type="primary", use_container_width=True, disabled=not can_run)
     
     # 3. 实时监测（辅助功能，放在最下方）
     with st.container(border=True):
@@ -496,7 +568,25 @@ with workspace[0]:
             st.markdown("#### 反应进度")
             progress = st.session_state.app_state["experiment"]["progress"]
             st.progress(progress)
-            st.markdown(f"步骤 {st.session_state.app_state['experiment']['current_step']}/5")
+            
+            # 显示当前步骤和总步骤
+            current_step = st.session_state.app_state["experiment"]["current_step"]
+            total_steps = st.session_state.app_state["experiment"]["total_steps"]
+            st.markdown(f"步骤 {current_step}/{total_steps}")
+            
+            # 根据当前步骤显示状态信息
+            if current_step == 0:
+                st.markdown("准备就绪，等待开始")
+            elif current_step in [1, 2]:
+                # 显示哪个泵正在运行或已完成
+                if st.session_state.app_state["pumps"][1]["running"]:
+                    st.markdown("正在执行: 泵1注射")
+                elif st.session_state.app_state["pumps"][2]["running"]:
+                    st.markdown("正在执行: 泵2注射")
+                else:
+                    completed_pumps = sum(1 for p in [1, 2] if st.session_state.app_state["pumps"][p]["completed"])
+                    st.markdown(f"已完成: {completed_pumps}个泵的注射")
+            
             st.markdown(f"剩余时间: {st.session_state.app_state['experiment']['remaining_time']}")
         
         with progress_cols[1]:
@@ -609,5 +699,5 @@ with st.container(border=True):
 
 # -------------------------- 页面布局结束 --------------------------
 
-# 添加自动刷新，间隔1000毫秒（2秒）
+# 添加自动刷新，间隔5000毫秒（5秒）
 streamlit_autorefresh.st_autorefresh(interval=5000, key="auto_refresh")
