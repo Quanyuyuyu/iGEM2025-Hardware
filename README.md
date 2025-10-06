@@ -1,6 +1,34 @@
 # iGEM2025-Hardware
-### 代码维护和提交
-[Git 教程](https://juejin.cn/post/7245176801491894333)
+Microfluidic test platform control software for iGEM 2025 project
 
-### 代码教程和运行方式
-[Streamlit 入门](https://www.cnblogs.com/1314520xh/p/18817662)
+## Overview
+This repository contains the control software for a microfluidic test platform, designed to automate protein reaction detection experiments. The software provides pump control, experiment progress tracking, data analysis, and system logging functionalities.
+
+## Features
+- Real-time pump control (flow rate and duration settings)
+- Experiment procedure automation with progress tracking
+- FCS data parsing and affinity curve fitting
+- System logging and status monitoring
+- Emergency stop functionality
+
+## Installation & Setup
+1. **Clone this repository**:
+    ```bash
+    git clone https://github.com/your-username/iGEM2025-Hardware.git
+    cd iGEM2025-Hardware
+2. Create and activate a virtual environment (recommended):
+    ```bash
+    python -m venv venv
+    
+    # Windows (Command Prompt)
+    venv\Scripts\activate
+    # Windows (PowerShell)
+    .\venv\Scripts\Activate.ps1
+    # macOS/Linux
+    source venv/bin/activate
+3. **Install dependencies**
+    ```bash
+    pip install -r requirements.txt
+4. **Run the Streamlit application**
+    ```bash
+    streamlit run .\MicroFluidicsApp.py
