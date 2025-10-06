@@ -18,14 +18,14 @@ This repository contains the control software for a microfluidic test platform, 
     cd iGEM2025-Hardware
 2. Create and activate a virtual environment (recommended):
     ```bash
-    python -m venv venv
+    python -m venv Streamlit
     
     # Windows (Command Prompt)
-    venv\Scripts\activate
+    Streamlit\Scripts\activate
     # Windows (PowerShell)
-    .\venv\Scripts\Activate.ps1
+    .\Streamlit\Scripts\Activate.ps1
     # macOS/Linux
-    source venv/bin/activate
+    source Streamlit/bin/activate
 3. **Install dependencies**
     ```bash
     pip install -r requirements.txt
