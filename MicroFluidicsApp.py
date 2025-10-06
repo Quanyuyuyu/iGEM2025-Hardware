@@ -7,47 +7,45 @@ from datetime import datetime
 import time
 import io
 import streamlit_autorefresh
+
 # 页面配置
 st.set_page_config(
-    page_title="微流控测试平台控制软件",
+    page_title="Microfluidic Test Platform Control Software",
     page_icon="🧪",
-    layout="centered"
+    layout="wide"  # 宽屏布局适合横屏观看
 )
+
 if 'message_display' not in st.session_state:
     st.session_state.message_display = {
         'show': False,
-        'type': '',  # 'warning' 或 'success'
+        'type': '',  # 'warning' or 'success'
         'content': '',
         'timestamp': 0
     }
+
 # 初始化状态
 if 'app_state' not in st.session_state:
     st.session_state.app_state = {
         "pumps": {
-            1: { "running": False, "flow": 50, "time": 10, "name": "蛋白液", "completed": False },
-            2: { "running": False, "flow": 30, "time": 15, "name": "缓冲液A", "completed": False },
-            3: { "running": False, "flow": 40, "time": 20, "name": "缓冲液B" }
+            1: { "running": False, "flow": 50, "time": 10, "name": "Protein A", "completed": False },
+            2: { "running": False, "flow": 30, "time": 15, "name": "Protein B", "completed": False },
+            3: { "running": False, "flow": 40, "time": 20, "name": "Buffer" }
         },
         "experiment": {
             "current_step": 0,
             "total_steps": 5,
             "progress": 0,
-            "remaining_time": "--分钟",
-            "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}  # 添加步骤完成状态
+            "remaining_time": "--minutes",
+            "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}
         },
         "system_log": [
-            "[14:28:15] 系统启动完成",
-            "[14:28:30] 加载实验流程: 蛋白反应检测"
-            # "[14:29:05] 泵1启动: 50μL/min, 10秒",
-            # "[14:29:15] 泵1已停止",
-            # "[14:29:20] 泵2启动: 30μL/min, 15秒",
-            # "[14:29:35] 泵2已停止",
-            # "[14:29:36] 开始混合反应，等待5分钟"
+            "[14:28:15] System startup completed",
+            "[14:28:30] Loaded experiment procedure: Protein reaction detection"
         ],
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "affinity_data": [],  # 存储格式: {"protein": "蛋白A", "concentration": 0.1, "affinity": 1.2, ...}
-        "uploaded_files": [] , # 存储已上传的文件名
-        "emergency_status": False  # 添加紧急停止状态标志
+        "affinity_data": [],
+        "uploaded_files": [] ,
+        "emergency_status": False
     }
 
 # 辅助函数：添加系统日志
@@ -63,14 +61,14 @@ def update_last_update():
 
 # 解析FCS数据文件
 def parse_fcs_data(uploaded_file):
-    """解析FCS仪器导出的CSV数据文件"""
+    """Parse CSV data file exported by FCS instrument"""
     try:
         df = pd.read_csv(uploaded_file)
         
-        # 检查必要的列是否存在
+        # 检查是否存在必要列
         required_columns = ['protein', 'concentration', 'affinity']
         if not all(col in df.columns for col in required_columns):
-            return None, f"CSV文件缺少必要列。需要包含: {', '.join(required_columns)}"
+            return None, f"CSV file missing necessary columns. Must include: {', '.join(required_columns)}"
         
         # 转换数据格式
         data = []
@@ -83,15 +81,15 @@ def parse_fcs_data(uploaded_file):
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
         
-        return data, "解析成功"
+        return data, "Parsing successful"
     except Exception as e:
-        return None, f"解析失败: {str(e)}"
+        return None, f"Parsing failed: {str(e)}"
 
-# 拟合亲和力曲线函数
+# 亲和力曲线拟合函数
 def fit_affinity_curve(concentrations, affinities):
-    """拟合浓度-亲和力曲线"""
+    """Fit concentration-affinity curve"""
     def binding_model(c, kd, bmax):
-        """典型的结合模型：Y = (Bmax * C) / (Kd + C)"""
+        """Typical binding model: Y = (Bmax * C) / (Kd + C)"""
         return (bmax * c) / (kd + c)
     
     try:
@@ -101,45 +99,45 @@ def fit_affinity_curve(concentrations, affinities):
             "model": binding_model
         }
     except Exception as e:
-        st.warning(f"曲线拟合失败: {str(e)}")
+        st.warning(f"Curve fitting failed: {str(e)}")
         return None
 
 # 回调函数：启动泵
 def start_pump(pump_id):
-    # 只设置泵的运行状态，不阻塞界面
+    # 仅设置泵运行状态，不阻塞界面
     pump = st.session_state.app_state["pumps"][pump_id]
     pump["running"] = True
-    add_system_log(f"泵{pump_id}启动: {pump['flow']}μL/min, {pump['time']}秒")
+    add_system_log(f"Pump {pump_id} started: {pump['flow']}μL/min, {pump['time']} seconds")
     update_last_update()
     
-    # 使用Streamlit的session_state记录启动时间
+    # 使用Streamlit的session_state记录开始时间
     st.session_state.app_state[f"pump_{pump_id}_start_time"] = time.time()
-    st.session_state.app_state[f"pump_{pump_id}_duration"] = pump["time"]/5 #加速
+    st.session_state.app_state[f"pump_{pump_id}_duration"] = pump["time"]/5 # 加速模拟
     
-    # 显示运行中状态，但不阻塞界面
-    st.info(f"泵{pump_id}运行中...")
+    # 显示运行状态，不阻塞界面
+    st.info(f"Pump {pump_id} running...")
 
-# 在应用主循环中添加一个检查函数
+# 在应用主循环中添加检查函数
 def check_pump_status():
     for pump_id in st.session_state.app_state["pumps"]:
         if (st.session_state.app_state["pumps"][pump_id]["running"] and 
             f"pump_{pump_id}_start_time" in st.session_state.app_state):
             elapsed = time.time() - st.session_state.app_state[f"pump_{pump_id}_start_time"]
             if elapsed >= st.session_state.app_state[f"pump_{pump_id}_duration"]:
-                # 泵运行时间已到，停止泵
+                # 泵运行时间到达，停止泵
                 st.session_state.app_state["pumps"][pump_id]["running"] = False
-                add_system_log(f"泵{pump_id}已停止")
-                # 对于泵1和泵2，设置完成标志
+                add_system_log(f"Pump {pump_id} stopped")
+                # 对泵1和泵2设置完成标志
                 if pump_id in [1, 2]:
                     st.session_state.app_state["pumps"][pump_id]["completed"] = True
                     
-                    # 计算已完成的泵数量，而不是根据泵ID设置current_step
+                    # 计算已完成的泵数量，而不是根据泵ID设置当前步骤
                     completed_pumps = 0
                     for p in [1, 2]:
                         if st.session_state.app_state["pumps"][p]["completed"]:
                             completed_pumps += 1
                     
-                    # 只有当已完成的泵数量大于当前步骤时，才更新步骤和进度
+                    # 仅当已完成的泵数量大于当前步骤时更新步骤和进度
                     if completed_pumps > st.session_state.app_state["experiment"]["current_step"]:
                         st.session_state.app_state["experiment"]["current_step"] = completed_pumps
                         st.session_state.app_state["experiment"]["steps_completed"][completed_pumps] = True
@@ -151,15 +149,16 @@ def check_pump_status():
                 # 清理临时状态
                 del st.session_state.app_state[f"pump_{pump_id}_start_time"]
                 del st.session_state.app_state[f"pump_{pump_id}_duration"]
+
 # 回调函数：停止泵
 def stop_pump(pump_id):
     st.session_state.app_state["pumps"][pump_id]["running"] = False
-    add_system_log(f"泵{pump_id}已手动停止")
+    add_system_log(f"Pump {pump_id} manually stopped")
     update_last_update()
 
 # 回调函数：运行实验流程
 def run_experiment():
-    add_system_log("开始执行实验流程: 蛋白反应检测")
+    add_system_log("Starting experiment procedure: Protein reaction detection")
     update_last_update()
     # 设置初始状态为步骤3
     st.session_state.app_state["experiment"]["current_step"] = 3
@@ -167,9 +166,8 @@ def run_experiment():
     st.session_state.app_state["experiment"]["experiment_start_time"] = time.time()
     st.session_state.app_state["experiment"]["current_step_start_time"] = time.time()
     st.session_state.app_state["experiment"]["running"] = True
-     # 移除临时进度条和状态文本
-    # progress_bar = st.progress(35)
-    # status_text = st.empty()
+
+# 检查实验进度
 def check_experiment_progress():
     if not st.session_state.app_state["experiment"].get("running", False):
         return
@@ -177,10 +175,10 @@ def check_experiment_progress():
     current_step = st.session_state.app_state["experiment"]["current_step"]
     step_start_time = st.session_state.app_state["experiment"]["current_step_start_time"]
     
-    # 定义各步骤的持续时间（秒）
+    # 定义每个步骤的持续时间（秒）
     step_durations = {
-        3: 10,  # 混合反应（原计划5分钟，缩短到10秒）
-        4: 10,  # 数据采集（原计划5分钟，缩短到10秒）
+        3: 10,  # 混合反应（原计划5分钟，缩短为10秒）
+        4: 10,  # 数据采集（原计划5分钟，缩短为10秒）
         5: 1    # 结果分析
     }
     
@@ -188,42 +186,40 @@ def check_experiment_progress():
     if current_step in step_durations and time.time() - step_start_time >= step_durations[current_step]:
         # 步骤完成，记录日志
         if current_step == 3:
-            add_system_log("步骤3完成: 混合反应结束")
+            add_system_log("Step 3 completed: Mixing reaction ended")
             st.session_state.app_state["experiment"]["steps_completed"][3] = True
             st.session_state.app_state["experiment"]["progress"] = 60
         elif current_step == 4:
-            add_system_log("步骤4完成: FCS数据采集结束")
+            add_system_log("Step 4 completed: FCS data collection ended")
             st.session_state.app_state["experiment"]["steps_completed"][4] = True
             st.session_state.app_state["experiment"]["progress"] = 80
         elif current_step == 5:
-            add_system_log("步骤5完成: 亲和力数据分析结束")
+            add_system_log("Step 5 completed: Affinity data analysis ended")
             st.session_state.app_state["experiment"]["steps_completed"][5] = True
             st.session_state.app_state["experiment"]["progress"] = 100
-            st.session_state.app_state["experiment"]["remaining_time"] = "0分钟"
-            add_system_log("实验流程执行完成")
+            st.session_state.app_state["experiment"]["remaining_time"] = "0 minutes"
+            add_system_log("Experiment procedure completed")
             st.session_state.app_state["experiment"]["running"] = False
-            st.success("实验流程已完成")
+            st.success("Experiment procedure completed")
         
         update_last_update()
         
-        # 进入下一步（如果还有）
+        # 进入下一步（如果有）
         if current_step < 5:
             current_step += 1
             st.session_state.app_state["experiment"]["current_step"] = current_step
             st.session_state.app_state["experiment"]["current_step_start_time"] = time.time()
             
-            # 记录下一步开始的日志
+            # 记录下一步开始日志
             if current_step == 4:
-                add_system_log("步骤4开始: FCS数据采集，等待5分钟")
+                add_system_log("Step 4 started: FCS data collection, waiting 5 minutes")
             elif current_step == 5:
-                add_system_log("步骤5开始: 亲和力数据分析")
+                add_system_log("Step 5 started: Affinity data analysis")
     else:
         # 更新剩余时间
         if current_step in step_durations:
             remaining = int(step_durations[current_step] - (time.time() - step_start_time))
-            st.session_state.app_state["experiment"]["remaining_time"] = f"{remaining//60}分{remaining%60}秒"
-    
-    
+            st.session_state.app_state["experiment"]["remaining_time"] = f"{remaining//60}min{remaining%60}s"
 
 # 回调函数：紧急停止
 def emergency_stop():
@@ -231,40 +227,40 @@ def emergency_stop():
         if st.session_state.app_state["pumps"][pump_id]["running"]:
             st.session_state.app_state["pumps"][pump_id]["running"] = False
     st.session_state.app_state["emergency_status"] = True  # 设置紧急停止状态为True
-    add_system_log("系统紧急停止已执行")
+    add_system_log("System emergency stop executed")
     update_last_update()
-    # st.warning("紧急停止已执行，所有设备已停止运行")
     st.session_state.message_display = {
         'show': True,
         'type': 'warning',
-        'content': "紧急停止已执行，所有设备已停止运行",
+        'content': "Emergency stop executed, all devices stopped",
         'timestamp': time.time()
     }
+
 # 回调函数：紧急停止后重置系统
 def reset_after_emergency():
     st.session_state.app_state["emergency_status"] = False  # 重置紧急停止状态
-     # 重置实验相关状态，将步骤归零
+    # 重置实验相关状态，步骤归零
     st.session_state.app_state["experiment"] = {
         "current_step": 0,
         "total_steps": 5,
         "progress": 0,
-        "remaining_time": "--分钟",
-        "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}  # 重置步骤完成状态
+        "remaining_time": "--minutes",
+        "steps_completed": {1: False, 2: False, 3: False, 4: False, 5: False}
     }
-    # 重置泵的完成状态
+    # 重置泵完成状态
     for pump_id in [1, 2]:
         if "completed" in st.session_state.app_state["pumps"][pump_id]:
             st.session_state.app_state["pumps"][pump_id]["completed"] = False
     
-    add_system_log("紧急情况已排查完毕，系统恢复正常状态")
+    add_system_log("Emergency situation resolved, system returned to normal state")
     update_last_update()
-    # st.success("系统已恢复正常，可以重新开始实验")
     st.session_state.message_display = {
         'show': True,
         'type': 'success',
-        'content': "系统已恢复正常，可以重新开始实验",
+        'content': "System returned to normal, experiment can be restarted",
         'timestamp': time.time()
     }
+
 # 生成实时数据图表
 def generate_realtime_chart():
     x = list(range(20))
@@ -273,15 +269,15 @@ def generate_realtime_chart():
     y = base + noise
     
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=y, mode='lines', name='吸光度 (527nm)',
+    fig.add_trace(go.Scatter(x=x, y=y, mode='lines', name='Absorbance (527nm)',
                             line=dict(color='#165DFF'),
                             fill='tozeroy', fillcolor='rgba(22, 93, 255, 0.1)'))
     
     fig.update_layout(
         height=200,
         margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title='时间点',
-        yaxis_title='吸光度',
+        xaxis_title='Time points',
+        yaxis_title='Absorbance',
         showlegend=False
     )
     return fig
@@ -292,7 +288,7 @@ def generate_affinity_chart():
     if not affinity_data:
         return None
     
-    # 获取唯一的蛋白列表
+    # 获取唯一蛋白列表
     proteins = list(set(item["protein"] for item in affinity_data))
     
     # 创建图表
@@ -315,7 +311,7 @@ def generate_affinity_chart():
         ))
         
         # 拟合曲线
-        if len(concentrations) >= 3:  # 需要至少3个点才能拟合
+        if len(concentrations) >= 3:  # 至少需要3个点才能拟合
             fit_result = fit_affinity_curve(concentrations, affinities)
             if fit_result:
                 x_fit = np.linspace(min(concentrations), max(concentrations), 100)
@@ -324,7 +320,7 @@ def generate_affinity_chart():
                     x=x_fit,
                     y=y_fit,
                     mode='lines',
-                    name=f'{protein} 拟合曲线',
+                    name=f'{protein} Fitted Curve',
                     line=dict(dash='dash')
                 ))
     
@@ -332,9 +328,9 @@ def generate_affinity_chart():
     fig.update_layout(
         height=400,
         margin=dict(l=20, r=20, t=30, b=20),
-        xaxis_title='浓度 (μM)',
-        yaxis_title='亲和力 (μM⁻¹)',
-        title='FCS测得亲和力与浓度关系曲线',
+        xaxis_title='Concentration (μM)',
+        yaxis_title='Affinity (μM⁻¹)',
+        title='FCS Measured Affinity vs Concentration Curve',
         showlegend=True
     )
     
@@ -382,124 +378,129 @@ def generate_affinity_ranking():
     fig.update_layout(
         height=350,
         margin=dict(l=20, r=20, t=30, b=20),
-        xaxis_title='蛋白名称',
-        yaxis_title='平均亲和力 (μM⁻¹)',
-        title='不同蛋白亲和力排序',
+        xaxis_title='Protein Name',
+        yaxis_title='Average Affinity (μM⁻¹)',
+        title='Affinity Ranking of Different Proteins',
         showlegend=False
     )
     
     return fig, protein_stats
-# 在页面布局前添加这行代码
+
+# 在页面布局前添加此行
 check_experiment_progress()
 
 # -------------------------- 页面布局开始 --------------------------
-# workspace = st.columns([1.5, 1])//？
 check_pump_status()
+
 # 页面标题和紧急控制区
-st.title("🧪 微流控测试平台控制软件")
-st.caption(f"最后更新: {st.session_state.app_state['last_update']}")
+st.title("🧪 Microfluidic Test Platform Control Software")
+st.caption(f"Last update: {st.session_state.app_state['last_update']}")
+
 if st.session_state.message_display['show']:
     elapsed = time.time() - st.session_state.message_display['timestamp']
-    if elapsed < 5:  # 消息显示5秒
+    if elapsed < 5:  # 显示5秒消息
         if st.session_state.message_display['type'] == 'warning':
             st.warning(st.session_state.message_display['content'])
         else:
             st.success(st.session_state.message_display['content'])
     else:
         st.session_state.message_display['show'] = False
+
 # 顶部状态栏（紧急控制 + 系统状态）
-top_row = st.columns([1, 3])
+top_row = st.columns([1, 4])  # 扩大右侧状态区域
 with top_row[0]:
-    st.button("⚠️ 紧急停止", on_click=emergency_stop, type="primary", use_container_width=True)
+    st.button("⚠️ Emergency Stop", on_click=emergency_stop, type="primary", use_container_width=True, key="emergency_stop_btn")
     if st.session_state.app_state["emergency_status"]:
-        st.button("✅ 已排查完毕，重新实验", on_click=reset_after_emergency, type="secondary", use_container_width=True)
+        st.button("✅ Issue Resolved, Restart Experiment", on_click=reset_after_emergency, type="secondary", use_container_width=True, key="reset_emergency_btn")
+
 with top_row[1]:
     status_cols = st.columns(3)
     with status_cols[0]:
         st.info("""
-        **液体传输系统**  
-        泵 × 3  
-        🟢 正常运行
+        **Fluid Transfer System**  
+        Pumps × 3  
+        🟢 Operating normally
         """, icon="💧")
     with status_cols[1]:
         st.info("""
-        **数据分析系统**  
-        FCS数据处理  
-        🟢 正常运行
+        **Data Analysis System**  
+        FCS data processing  
+        🟢 Operating normally
         """, icon="📊")
     with status_cols[2]:
         st.info("""
-        **当前任务**  
-        实验ID: EXP-20230515-002  
-        🔄 进行中
+        **Current Task**  
+        Experiment ID: EXP-20230515-002  
+        🔄 In progress
         """, icon="🔬")
 
 st.divider()
 
 # 主要工作区（左侧：实验控制 | 右侧：数据分析）
-workspace = st.columns([5, 6])  # 微调比例，数据分析区域略宽以更好展示图表
+workspace = st.columns([6, 7])  # 加宽整体比例，更适合横屏
 
 # -------------------------- 左侧：实验控制区 --------------------------
 with workspace[0]:
-    st.subheader("🔧 实验控制中心")
+    st.subheader("🔧 Experiment Control Center")
     
-    # 1. 泵控制（核心操作，放在最上方）
+    # 1. 泵控制（核心操作，放在顶部）
     with st.container(border=True):
-        st.markdown("### 💧 泵控制")
-        for pump_id in [1, 2, 3]:
-            pump = st.session_state.app_state["pumps"][pump_id]
-            with st.expander(f"泵{pump_id} ({pump['name']})", expanded=True):
-                col_flow, col_time = st.columns(2)
-                with col_flow:
-                    flow = st.number_input(
-                        "流量 (μL/min)", 
-                        min_value=0, 
-                        max_value=1000, 
-                        value=pump["flow"],
-                        key=f"flow_{pump_id}"
-                    )
-                    st.session_state.app_state["pumps"][pump_id]["flow"] = flow
+        st.markdown("### 💧 Pump Control")
+        # 泵控制横向排列，节省垂直空间
+        pump_cols = st.columns(3)
+        for idx, pump_id in enumerate([1, 2, 3]):
+            with pump_cols[idx]:
+                pump = st.session_state.app_state["pumps"][pump_id]
+                st.markdown(f"**Pump {pump_id}**<br>{pump['name']}", unsafe_allow_html=True)
                 
-                with col_time:
-                    time_val = st.number_input(
-                        "时间 (s)", 
-                        min_value=1, 
-                        max_value=3600, 
-                        value=pump["time"],
-                        key=f"time_{pump_id}"
-                    )
-                    st.session_state.app_state["pumps"][pump_id]["time"] = time_val
+                flow = st.number_input(
+                    "Flow rate (μL/min)", 
+                    min_value=0, 
+                    max_value=1000, 
+                    value=pump["flow"],
+                    key=f"flow_{pump_id}"
+                )
+                st.session_state.app_state["pumps"][pump_id]["flow"] = flow
+                
+                time_val = st.number_input(
+                    "Time (s)", 
+                    min_value=1, 
+                    max_value=3600, 
+                    value=pump["time"],
+                    key=f"time_{pump_id}"
+                )
+                st.session_state.app_state["pumps"][pump_id]["time"] = time_val
                 
                 run_col1, run_col2 = st.columns(2)
                 with run_col1:
                     st.button(
-                        "启动", 
+                        "Start", 
                         on_click=start_pump, 
                         args=(pump_id,),
-                        disabled=pump["running"] or st.session_state.app_state["emergency_status"],  # 添加紧急停止状态检查
-                        key=f"start_{pump_id}",
+                        disabled=pump["running"] or st.session_state.app_state["emergency_status"],
+                        key=f"start_pump_{pump_id}",
                         type="primary",
                         use_container_width=True
                     )
                 
                 with run_col2:
                     st.button(
-                        "停止", 
+                        "Stop", 
                         on_click=stop_pump, 
                         args=(pump_id,),
                         disabled=not pump["running"],
-                        key=f"stop_{pump_id}",
+                        key=f"stop_pump_{pump_id}",
                         use_container_width=True
                     )
                 
-                status = "运行中 ⚠️" if pump["running"] else "就绪 ✅"
-                st.caption(f"状态: {status}")
+                status = "Running ⚠️" if pump["running"] else "Ready ✅"
+                st.caption(f"Status: {status}")
     
-    # 2. 实验流程（次重要，放在泵控制下方）
+    # 2. 实验流程（次要重要，放在泵控制下方）
     with st.container(border=True):
-        st.markdown("### 📋 实验流程设计")
-        with st.expander("当前流程: 蛋白反应检测", expanded=True):
-            st.markdown("包含 5 个步骤 | 预计时长: 15分钟")
+        st.markdown("### 📋 Experiment Procedure Design")
+        with st.expander("Current procedure: Protein reaction detection", expanded=True):
+            st.markdown("Contains 5 steps | Estimated duration: 15 minutes")
             
             # 流程步骤
             for step in range(1, 6):
@@ -511,23 +512,24 @@ with workspace[0]:
                     bg_color = "#e6f7ff" if st.session_state.app_state["pumps"][2]["completed"] else "#f5f5f5"
                     step_num_color = "#1890ff" if st.session_state.app_state["pumps"][2]["completed"] else "#8c8c8c"
                 else:
-                     # 对于步骤3-5，根据steps_completed状态设置颜色
+                    # 步骤3-5根据steps_completed状态设置颜色
                     bg_color = "#e6f7ff" if st.session_state.app_state["experiment"]["steps_completed"].get(step, False) else "#f5f5f5"
                     step_num_color = "#1890ff" if st.session_state.app_state["experiment"]["steps_completed"].get(step, False) else "#8c8c8c"
-    
-    # 根据步骤和泵的完成状态生成显示文本
+                
+                # 根据步骤和泵完成状态生成显示文本
                 if step == 1:
                     if st.session_state.app_state["pumps"][1]["completed"]:
-                        step_detail = f"泵1 | {st.session_state.app_state['pumps'][1]['flow']}μL/min | {st.session_state.app_state['pumps'][1]['time']}秒"
+                        step_detail = f"Pump 1 | {st.session_state.app_state['pumps'][1]['flow']}μL/min | {st.session_state.app_state['pumps'][1]['time']}s"
                     else:
-                        step_detail = "泵1 | --μL/min | --秒"
+                        step_detail = "Pump 1 | --μL/min | --s"
                 elif step == 2:
                     if st.session_state.app_state["pumps"][2]["completed"]:
-                        step_detail = f"泵2 | {st.session_state.app_state['pumps'][2]['flow']}μL/min | {st.session_state.app_state['pumps'][2]['time']}秒"
+                        step_detail = f"Pump 2 | {st.session_state.app_state['pumps'][2]['flow']}μL/min | {st.session_state.app_state['pumps'][2]['time']}s"
                     else:
-                        step_detail = "泵2 | --μL/min | --秒"
+                        step_detail = "Pump 2 | --μL/min | --s"
                 else:
-                    step_detail = ["静置 | 5分钟", "FCS检测", "亲和力分析"][step-3]             
+                    step_detail = ["Incubation | 5min", "FCS detection", "Affinity analysis"][step-3]             
+                
                 st.markdown(f"""
                 <div style="background-color: {bg_color}; padding: 10px; border-radius: 5px; margin: 5px 0;">
                     <div style="display: flex; align-items: center;">
@@ -537,7 +539,7 @@ with workspace[0]:
                         </div>
                         <div style="flex-grow: 1;">
                             {
-                                ["注入蛋白液", "注入缓冲液A", "混合反应", "数据采集", "结果分析"][step-1]
+                                ["Inject protein A", "Inject protein B", "Inject buffer", "Data collection", "Result analysis"][step-1]
                             }
                             <div style="font-size: 12px; color: #666;">
                                 {step_detail}
@@ -553,151 +555,159 @@ with workspace[0]:
             
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                st.button("➕ 添加步骤", key="add_step", use_container_width=True)
+                st.button("➕ Add Step", key="add_step_btn", use_container_width=True)
             with col_btn2:
-                 # 只有当泵1和泵2都完成时，才能点击运行流程按钮
+                # 只有泵1和泵2都完成才能点击运行流程按钮
                 can_run = st.session_state.app_state["pumps"][1]["completed"] and st.session_state.app_state["pumps"][2]["completed"]
-                st.button("▶️ 运行流程", on_click=run_experiment, key="run_process", 
+                st.button("▶️ Run Procedure", on_click=run_experiment, key="run_process_btn", 
                          type="primary", use_container_width=True, disabled=not can_run)
     
-    # 3. 实时监测（辅助功能，放在最下方）
+    # 3. 实时监控（辅助功能，放在底部）
     with st.container(border=True):
-        st.markdown("### 🔍 实时监测")
+        st.markdown("### 🔍 Real-time Monitoring")
         progress_cols = st.columns([1, 2])
         with progress_cols[0]:
-            st.markdown("#### 反应进度")
+            st.markdown("#### Reaction Progress")
             progress = st.session_state.app_state["experiment"]["progress"]
             st.progress(progress)
             
             # 显示当前步骤和总步骤
             current_step = st.session_state.app_state["experiment"]["current_step"]
             total_steps = st.session_state.app_state["experiment"]["total_steps"]
-            st.markdown(f"步骤 {current_step}/{total_steps}")
+            st.markdown(f"Step {current_step}/{total_steps}")
             
             # 根据当前步骤显示状态信息
             if current_step == 0:
-                st.markdown("准备就绪，等待开始")
+                st.markdown("Ready, waiting to start")
             elif current_step in [1, 2]:
                 # 显示哪个泵正在运行或已完成
                 if st.session_state.app_state["pumps"][1]["running"]:
-                    st.markdown("正在执行: 泵1注射")
+                    st.markdown("Executing: Pump 1 injection")
                 elif st.session_state.app_state["pumps"][2]["running"]:
-                    st.markdown("正在执行: 泵2注射")
+                    st.markdown("Executing: Pump 2 injection")
                 else:
                     completed_pumps = sum(1 for p in [1, 2] if st.session_state.app_state["pumps"][p]["completed"])
-                    st.markdown(f"已完成: {completed_pumps}个泵的注射")
+                    st.markdown(f"Completed: {completed_pumps} pump injections")
             
-            st.markdown(f"剩余时间: {st.session_state.app_state['experiment']['remaining_time']}")
+            st.markdown(f"Remaining time: {st.session_state.app_state['experiment']['remaining_time']}")
         
         with progress_cols[1]:
-            st.markdown("#### 实时数据")
+            st.markdown("#### Real-time Data")
             st.plotly_chart(generate_realtime_chart(), use_container_width=True)
 
 # -------------------------- 右侧：数据分析区 --------------------------
 with workspace[1]:
-    st.subheader("📈 FCS亲和力数据分析")
+    st.subheader("📈 FCS Affinity Data Analysis")
     
-    # 1. 数据上传（数据分析入口，放在最上方）
+    # 1. 数据上传（数据分析入口，放在顶部）
     with st.container(border=True):
-        st.markdown("### 📂 数据上传")
-        uploaded_file = st.file_uploader("上传FCS仪器测得的CSV数据文件", type=["csv"], 
-                                        label_visibility="collapsed")
+        st.markdown("### 📂 Data Upload")
+        # 数据上传区使用更宽的布局
+        upload_row = st.columns([3, 1])
+        with upload_row[0]:
+            uploaded_file = st.file_uploader("Upload CSV data file from FCS instrument", type=["csv"], 
+                                            label_visibility="collapsed", key="fcs_file_uploader")
+        
+        with upload_row[1]:
+            # 数据管理按钮垂直排列
+            view_data = st.button("👀 View Current Data", type="secondary", use_container_width=True, key="view_data_btn")
+            clear_data = st.button("🗑️ Clear All Data", type="secondary", use_container_width=True, key="clear_data_btn")
         
         # 数据格式说明（使用折叠面板节省空间）
-        with st.expander("📋 数据格式要求", expanded=False):
+        with st.expander("📋 Data Format Requirements", expanded=False):
             st.markdown("""
-            CSV文件需包含以下列：
-            - protein: 蛋白名称（字符串）
-            - concentration: 浓度值（数值，单位μM）
-            - affinity: 亲和力值（数值，单位μM⁻¹）
+            CSV file must contain the following columns:
+            - protein: Protein name (string)
+            - concentration: Concentration value (numeric, unit μM)
+            - affinity: Affinity value (numeric, unit μM⁻¹)
             
-            示例数据：
+            Example data:
             ```
             protein,concentration,affinity
-            蛋白A,0.1,2.3
-            蛋白A,0.2,3.8
-            蛋白B,0.1,1.9
-            蛋白B,0.3,4.2
+            ProteinA,0.1,2.3
+            ProteinA,0.2,3.8
+            ProteinB,0.1,1.9
+            ProteinB,0.3,4.2
             ```
             """)
         
-        # 处理上传文件
+        # Process uploaded file
         if uploaded_file is not None and uploaded_file.name not in st.session_state.app_state["uploaded_files"]:
             data, message = parse_fcs_data(uploaded_file)
             
             if data:
-                # 保存数据
+                # Save data
                 st.session_state.app_state["affinity_data"].extend(data)
                 st.session_state.app_state["uploaded_files"].append(uploaded_file.name)
-                add_system_log(f"已上传FCS数据文件: {uploaded_file.name}，包含{len(data)}条记录")
+                add_system_log(f"Uploaded FCS data file: {uploaded_file.name}, containing {len(data)} records")
                 update_last_update()
-                st.success(f"文件上传成功！{message}，新增{len(data)}条数据")
+                st.success(f"File uploaded successfully! {message}, added {len(data)} new records")
             else:
-                st.error(f"文件上传失败: {message}")
+                st.error(f"File upload failed: {message}")
         
-        # 数据管理按钮
+        # Data management buttons (添加了唯一key)
         col_data1, col_data2 = st.columns(2)
         with col_data1:
-            if st.button("👀 查看当前数据", type="secondary", use_container_width=True):
+            if st.button("👀 View Current Data", type="secondary", use_container_width=True, key="view_current_data_btn"):
                 if st.session_state.app_state["affinity_data"]:
                     df = pd.DataFrame(st.session_state.app_state["affinity_data"])
                     st.dataframe(df, use_container_width=True)
                 else:
-                    st.info("暂无数据")
+                    st.info("No data available")
         
         with col_data2:
-            if st.button("🗑️ 清除所有数据", type="secondary", use_container_width=True):
+            if st.button("🗑️ Clear All Data", type="secondary", use_container_width=True, key="clear_all_data_btn"):
                 st.session_state.app_state["affinity_data"] = []
                 st.session_state.app_state["uploaded_files"] = []
-                add_system_log("已清除所有亲和力数据")
-                st.success("所有数据已清除")
+                add_system_log("All affinity data cleared")
+                st.success("All data has been cleared")
     
-    # 2. 亲和力曲线（核心分析结果，放在中间）
+    # 2. Affinity curve (core analysis result, placed in the middle)
     with st.container(border=True):
-        st.markdown("### 📉 亲和力曲线")
+        st.markdown("### 📉 Affinity Curve")
         affin_fig = generate_affinity_chart()
         if affin_fig:
             st.plotly_chart(affin_fig, use_container_width=True)
             
-            # 图表注释
+            # Chart notes
             st.markdown("""
-            **图表注释**:  
-            - 不同颜色代表不同蛋白的亲和力数据  
-            - 实线点表示实际测量值  
-            - 虚线表示基于结合模型的拟合曲线  
-            - 亲和力值越高，表示蛋白结合能力越强
+            **Chart Notes**:  
+            - Different colors represent affinity data for different proteins  
+            - Solid points indicate actual measured values  
+            - Dashed lines represent fitted curves based on binding models  
+            - Higher affinity values indicate stronger protein binding ability
             """)
         else:
-            st.info("尚未上传亲和力数据，请先上传FCS数据文件")
+            st.info("No affinity data uploaded yet. Please upload an FCS data file first")
     
-    # 3. 亲和力排序（分析结论，放在最下方）
+    # 3. Affinity ranking (analysis conclusion, placed at the bottom)
     with st.container(border=True):
-        st.markdown("### 🏆 蛋白亲和力排序")
+        st.markdown("### 🏆 Protein Affinity Ranking")
         ranking_fig, protein_stats = generate_affinity_ranking()
         if ranking_fig and protein_stats:
             st.plotly_chart(ranking_fig, use_container_width=True)
             
-            # 显示详细统计数据
-            st.markdown("#### 详细统计结果")
+            # Display detailed statistical data
+            st.markdown("#### Detailed Statistical Results")
             sorted_proteins = sorted(protein_stats, key=lambda x: x["avg_affinity"], reverse=True)
             for i, item in enumerate(sorted_proteins, 1):
-                st.markdown(f"{i}. **{item['protein']}**: 平均亲和力 = {item['avg_affinity']:.3f} ± {item['std_affinity']:.3f} (n={item['count']})")
+                st.markdown(f"{i}. **{item['protein']}**: Average affinity = {item['avg_affinity']:.3f} ± {item['std_affinity']:.3f} (n={item['count']})")
             
-            # 显示最高亲和力蛋白
+            # Display highest affinity protein
             top_protein = sorted_proteins[0]
-            st.success(f"最高亲和力蛋白: {top_protein['protein']} (平均值: {top_protein['avg_affinity']:.3f})")
+            st.success(f"Highest affinity protein: {top_protein['protein']} (Average: {top_protein['avg_affinity']:.3f})")
         else:
-            st.info("暂无足够数据进行排序分析")
+            st.info("Insufficient data for ranking analysis")
 
-# 底部系统日志（全宽显示，方便查看完整记录）
+# Bottom system log (full-width display for easy viewing of complete records)
 st.divider()
 with st.container(border=True):
-    st.subheader("📝 系统日志")
+    st.subheader("📝 System Log")
     log_text = "\n".join(reversed(st.session_state.app_state["system_log"]))
-    # 移除不支持的use_container_width参数
-    st.text_area("系统操作记录", log_text, height=150, disabled=True)
+    # Remove unsupported use_container_width parameter
+    st.text_area("System operation records", log_text, height=150, disabled=True)
 
-# -------------------------- 页面布局结束 --------------------------
+# -------------------------- End of page layout --------------------------
 
-# 添加自动刷新，间隔5000毫秒（5秒）
+# Add auto-refresh with 5000ms (5 seconds) interval
 streamlit_autorefresh.st_autorefresh(interval=5000, key="auto_refresh")
